@@ -16,8 +16,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: uv pip install -e '.[dev]' --system
-      - run: ruff check src tests scripts
-      - run: ruff format --check src tests scripts
-      - run: mypy src/chainpulse
-      - run: pytest -q
+          enable-cache: true
+      - run: uv sync --extra dev
+      - run: uv run ruff check src tests scripts
+      - run: uv run ruff format --check src tests scripts
+      - run: uv run mypy src/chainpulse
+      - run: uv run pytest -q
