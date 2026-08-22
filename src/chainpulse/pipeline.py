@@ -12,6 +12,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from chainpulse.alerts import AlertConfig, evaluate_alerts
 from chainpulse.connectors import (
     BinanceConnector,
     DefiLlamaConnector,
@@ -40,7 +41,9 @@ async def _collect(
 
 
 async def run_snapshot(
-    storage_path: str = "data/chainpulse.duckdb", storage: DuckDBStorage | None = None
+    storage_path: str = "data/chainpulse.duckdb",
+    storage: DuckDBStorage | None = None,
+    alert_cfg: AlertConfig | None = None,
 ) -> dict[str, str]:
     """One full sweep across every venue. Safe to re-run at any cadence.
 
@@ -67,6 +70,10 @@ async def run_snapshot(
             )
         results = dict(zip((label for label, _, _ in jobs), outcomes, strict=True))
         db.record_sweep(results)
+        try:
+            evaluate_alerts(db, alert_cfg)
+        except Exception:  # noqa: BLE001 - alerts must never break a sweep
+            log.exception("alert evaluation failed")
         return results
     finally:
         if own_db:
@@ -104,3 +111,22 @@ async def backfill_funding_history(
     finally:
         if own_db:
             db.close()
+
+
+async def backfill_top_funding(
+    symbols: list[str],
+    limit: int = 1000,
+    concurrency: int = 3,
+    storage_path: str = "data/chainpulse.duckdb",
+    storage: DuckDBStorage | None = None,
+) -> dict[str, str]:
+    """Watermark-resumable history backfill for many symbols at once."""
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(sym: str) -> tuple[str, str]:
+        async with sem:
+            res = await backfill_funding_history(sym, limit, storage_path, storage=storage)
+            return sym, res["backfill"]
+
+    pairs = await asyncio.gather(*(one(s) for s in symbols))
+    return dict(pairs)

@@ -31,9 +31,10 @@ class StaticClient(HttpClient):
         self.responses = responses
 
     async def get_json(self, path: str, params=None) -> Any:  # type: ignore[override]
-        for key, payload in self.responses.items():
-            if key in path:
-                return payload
+        stripped = path.rstrip("/")
+        for key in sorted(self.responses, key=len, reverse=True):
+            if stripped.endswith(f"/{key.lstrip('/')}"):
+                return self.responses[key]
         raise AssertionError(f"unexpected GET {path}")
 
     async def post_json(self, path: str, payload=None) -> Any:  # type: ignore[override]
@@ -99,7 +100,15 @@ async def test_defillama_chains_and_pools() -> None:
 
 
 async def test_blockscout_wei_conversion() -> None:
-    conn = BlockscoutConnector(StaticClient({"addresses": load("blockscout_address.json")}))
+    conn = BlockscoutConnector(
+        StaticClient(
+            {
+                "addresses/0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045": load(
+                    "blockscout_address.json"
+                )
+            }
+        )
+    )
     wb = await conn.wallet_balance("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
     expected_native = Decimal("6640474280883335348") / Decimal(10**18)
     assert wb.balance_native == expected_native
@@ -111,3 +120,45 @@ async def test_blockscout_wei_conversion() -> None:
 def test_wallet_balance_unsupported_chain() -> None:
     with pytest.raises(ValueError):
         WalletBalance.from_wei("0xabc", "solana", Decimal(1), None)
+
+
+async def test_blockscout_wallet_overview_parses_tokens_and_txs() -> None:
+    conn = BlockscoutConnector(
+        StaticClient(
+            {
+                "addresses/0xabc": load("blockscout_address.json"),
+                "token-balances": [
+                    {
+                        "token": {
+                            "symbol": "WHITE",
+                            "decimals": 18,
+                            "address_hash": "0xt1",
+                            "exchange_rate": "0.01",
+                        },
+                        "value": "1000000000000000000000",
+                    },
+                    {
+                        "token": {"symbol": "BAD", "decimals": None, "address_hash": "0xt2"},
+                        "value": "5",
+                    },
+                ],
+                "/transactions": {
+                    "items": [
+                        {
+                            "hash": "0xh1",
+                            "method": "transfer",
+                            "value": "1000000000000000000",
+                            "to": {"hash": "0xabc"},
+                            "timestamp": "2026-08-21T21:54:23.000000Z",
+                        },
+                    ]
+                },
+            }
+        )
+    )
+    ov = await conn.wallet_overview("0xabc")
+    assert ov["ens_name"] == "vitalik.eth"
+    assert ov["tokens"][0].symbol == "WHITE"
+    assert ov["tokens"][0].usd_value == Decimal("10")  # 1000 tokens @ $0.01
+    tx = ov["recent_txs"][0]
+    assert tx.direction == "in" and tx.timestamp_ms > 10**12  # ISO timestamp normalized to ms

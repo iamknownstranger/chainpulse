@@ -134,3 +134,57 @@ class WalletBalance(Record):
             usd_price=usd_price,
             balance_usd=balance_usd,
         )
+
+
+class TickSample(Record):
+    """One downsampled observation from a live market stream."""
+
+    venue: str
+    base: str
+    quote: str
+    mark_price: Decimal
+    funding_rate: Decimal | None = None
+    event_ts_ms: int
+    bucket_seconds: ClassVar[int] = 60
+
+    symbol: str = ""
+
+    def model_post_init(self, __context: object) -> None:
+        if not self.symbol:
+            self.symbol = canonical(self.base, self.quote)
+
+    @property
+    def bucket_ts_ms(self) -> int:
+        step = self.bucket_seconds * 1000
+        return self.event_ts_ms - (self.event_ts_ms % step)
+
+
+class Alert(Record):
+    """A threshold breach raised after a sweep. Idempotent per hour-bucket."""
+
+    kind: str
+    severity: str = "warning"
+    subject: str
+    detail: str
+    bucket_ts_ms: int = 0
+
+    def model_post_init(self, __context: object) -> None:
+        if not self.bucket_ts_ms:
+            self.bucket_ts_ms = int(self.collected_at.timestamp() * 1000) // 3_600_000 * 3_600_000
+
+
+class TokenHolding(Record):
+    contract: str
+    symbol: str
+    decimals: int = 18
+    balance_native: Decimal
+    usd_price: Decimal | None = None
+    usd_value: Decimal | None = None
+
+
+class TxSummary(Record):
+    hash: str
+    method: str = ""
+    value_native: Decimal = Decimal(0)
+    direction: str = ""
+    timestamp_ms: int = 0

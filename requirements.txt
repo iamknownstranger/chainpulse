@@ -5,3 +5,4 @@ pytz>=2024.1
 pandas>=2.0
 plotly>=5.22
 streamlit>=1.37
+cryptography>=42

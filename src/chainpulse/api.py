@@ -82,6 +82,26 @@ def create_app(storage_path: str | Path = "data/chainpulse.duckdb") -> FastAPI:
             for row in app.state.storage.yields(min_tvl_usd, limit)
         ]
 
+    @app.get("/alerts")
+    async def alerts(
+        since_hours: float = Query(48, ge=0.1), limit: int = Query(100, ge=1, le=500)
+    ) -> list[dict]:
+        return app.state.storage.recent_alerts(since_hours, limit)
+
+    @app.get("/ticks/latest")
+    async def ticks_latest(
+        symbol: str | None = None, limit: int = Query(200, ge=1, le=2000)
+    ) -> list[dict]:
+        rows = app.state.storage.con.execute(
+            """SELECT venue, symbol, base, mark_price, funding_rate, event_ts_ms
+               FROM tick_samples
+               WHERE (? IS NULL OR symbol = ?)
+               ORDER BY event_ts_ms DESC LIMIT ?""",
+            [symbol.upper() if symbol else None, symbol.upper() if symbol else None, limit],
+        ).fetchall()
+        cols = ["venue", "symbol", "base", "mark_price", "funding_rate", "event_ts_ms"]
+        return [dict(zip(cols, row, strict=True)) for row in rows]
+
     @app.get("/wallet/{chain}/{address}")
     async def wallet(chain: str, address: str) -> dict:
         try:

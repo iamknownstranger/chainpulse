@@ -9,6 +9,7 @@ left off rather than double-counting.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
@@ -64,6 +65,25 @@ CREATE TABLE IF NOT EXISTS watermarks (
     stream      TEXT PRIMARY KEY,
     value       JSON NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tick_samples (
+    venue          TEXT NOT NULL,
+    symbol         TEXT NOT NULL,
+    base           TEXT NOT NULL,
+    mark_price     DECIMAL(28, 18) NOT NULL,
+    funding_rate   DECIMAL(28, 18),
+    event_ts_ms    BIGINT NOT NULL,
+    collected_at   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (venue, symbol, event_ts_ms)
+);
+CREATE TABLE IF NOT EXISTS alerts (
+    kind         TEXT NOT NULL,
+    subject      TEXT NOT NULL,
+    bucket_ts_ms BIGINT NOT NULL,
+    severity     TEXT NOT NULL,
+    detail       TEXT NOT NULL,
+    collected_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (kind, subject, bucket_ts_ms)
 );
 CREATE TABLE IF NOT EXISTS sweep_log (
     ts        TIMESTAMPTZ NOT NULL,
@@ -170,6 +190,62 @@ class DuckDBStorage:
                 wb.collected_at,
             ),
         )
+
+    def save_ticks(self, ticks: Sequence) -> int:
+        if not ticks:
+            return 0
+        rows = [
+            (
+                t.venue,
+                t.symbol,
+                t.base,
+                str(t.mark_price),
+                str(t.funding_rate) if t.funding_rate is not None else None,
+                t.bucket_ts_ms,
+                t.collected_at,
+            )
+            for t in ticks
+        ]
+        before_row = self.con.execute("SELECT count(*) FROM tick_samples").fetchone()
+        assert before_row is not None
+        before = int(before_row[0])
+        self.con.executemany(
+            """INSERT INTO tick_samples VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT DO NOTHING""",
+            rows,
+        )
+        after_row = self.con.execute("SELECT count(*) FROM tick_samples").fetchone()
+        assert after_row is not None
+        return int(after_row[0]) - before
+
+    def latest_tick_age_s(self) -> float | None:
+        row = self.con.execute("SELECT max(event_ts_ms) FROM tick_samples").fetchone()
+        if not row or len(row) == 0 or row[0] is None:
+            return None
+        return max(0.0, time.time() - float(row[0]) / 1000)
+
+    def save_alerts(self, alerts: Sequence) -> int:
+        if not alerts:
+            return 0
+        self.con.executemany(
+            """INSERT INTO alerts VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT DO NOTHING""",
+            [
+                (a.kind, a.subject, a.bucket_ts_ms, a.severity, a.detail, a.collected_at)
+                for a in alerts
+            ],
+        )
+        return len(alerts)
+
+    def recent_alerts(self, since_hours: float = 48.0, limit: int = 200) -> list[dict]:
+        cols = ("ts", "kind", "severity", "subject", "detail")
+        rows = self.con.execute(
+            f"""SELECT collected_at, kind, severity, subject, detail FROM alerts
+                 WHERE collected_at > now() - INTERVAL '{since_hours}' HOUR
+                 ORDER BY collected_at DESC LIMIT ?""",
+            [limit],
+        ).fetchall()
+        return [dict(zip(cols, r, strict=True)) for r in rows]
 
     def record_sweep(self, results: dict[str, str]) -> None:
         self.con.executemany(
@@ -282,7 +358,14 @@ class DuckDBStorage:
         return int(row[0])
 
     def stats(self) -> dict[str, int | None]:
-        tables = ["funding_events", "chain_tvl", "yield_pools", "wallet_balances"]
+        tables = [
+            "funding_events",
+            "chain_tvl",
+            "yield_pools",
+            "wallet_balances",
+            "tick_samples",
+            "alerts",
+        ]
         counts: dict[str, int | None] = {t: self._count(t) for t in tables}
         wm = self.con.execute("SELECT stream, updated_at FROM watermarks").fetchall()
         counts["watermarked_streams"] = len(wm)
