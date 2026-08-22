@@ -1,0 +1,4 @@
+[[{"szDecimals":5,"name":"BTC","maxLeverage":40},{"szDecimals":2,"name":"SOL","maxLeverage":20},{"szDecimals":1,"name":"MATIC","maxLeverage":20,"isDelisted":true}],
+ [{"funding":"0.0000125","openInterest":"34554.93","prevDayPx":"77000","dayNtlVlm":"6704834822","markPx":"77417.0","midPx":"77416.5"},
+  {"funding":"-0.00005","openInterest":"100.5","prevDayPx":"150","dayNtlVlm":"900000","markPx":"151.2","midPx":"151.1"},
+  {"funding":"0.00001","openInterest":"1","prevDayPx":"1","dayNtlVlm":"1","markPx":"1","midPx":"1"}]]

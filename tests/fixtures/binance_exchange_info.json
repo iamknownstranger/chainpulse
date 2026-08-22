@@ -1,0 +1,5 @@
+{"timezone":"UTC","symbols":[
+  {"symbol":"BTCUSDT","status":"TRADING","baseAsset":"BTC","quoteAsset":"USDT","contractType":"PERPETUAL"},
+  {"symbol":"ETHUSDT","status":"TRADING","baseAsset":"ETH","quoteAsset":"USDT","contractType":"PERPETUAL"},
+  {"symbol":"BTCUSDT_260925","status":"TRADING","baseAsset":"BTC","quoteAsset":"USDT","contractType":"CURRENT_QUARTER_DELIVERING"}
+]}

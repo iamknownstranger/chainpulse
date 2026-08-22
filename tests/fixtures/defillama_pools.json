@@ -1,0 +1,3 @@
+{"status":"success","data":[
+ {"chain":"Ethereum","project":"lido","symbol":"STETH","tvlUsd":24084169094,"apy":2.242,"stablecoin":false,"pool":"abc-1"},
+ {"chain":"Arbitrum","project":"gmx","symbol":"GLV","tvlUsd":50000000,"apy":null,"stablecoin":false,"pool":"def-2"}]}

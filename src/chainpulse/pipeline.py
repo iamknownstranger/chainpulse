@@ -1,0 +1,97 @@
+"""Async orchestration: collect from all venues, persist what succeeded.
+
+Sources fail independently (rate limits, geo-blocks, upstream outages), so
+each collection task is isolated: one venue going down must never stop the
+others from landing data.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from chainpulse.connectors import (
+    BinanceConnector,
+    DefiLlamaConnector,
+    HyperliquidConnector,
+)
+from chainpulse.storage import DuckDBStorage
+
+log = logging.getLogger(__name__)
+
+
+async def _collect(
+    label: str,
+    coro: Awaitable[list[Any]],
+    storage: DuckDBStorage,
+    saver: Callable[[list[Any]], int],
+) -> str:
+    try:
+        records = await coro
+        saved = saver(records)
+        msg = f"{label}: collected={len(records)} new_rows={saved}"
+        log.info(msg)
+        return msg
+    except Exception as exc:  # noqa: BLE001 - isolation is the point
+        log.exception("%s failed, continuing without it", label)
+        return f"{label}: FAILED ({type(exc).__name__}: {exc})"
+
+
+async def run_snapshot(storage_path: str = "data/chainpulse.duckdb") -> dict[str, str]:
+    """One full sweep across every venue. Safe to re-run at any cadence.
+
+    Sources run concurrently and fail independently; wall time is the slowest
+    source, not the sum of them.
+    """
+    jobs: list[tuple[str, Awaitable[list[Any]], Callable[[list[Any]], int]]] = []
+    async with (
+        BinanceConnector() as binance,
+        HyperliquidConnector() as hl,
+        DefiLlamaConnector() as llama,
+    ):
+        with DuckDBStorage(storage_path) as storage:
+            jobs = [
+                ("binance.funding", binance.funding_snapshots(), storage.save_funding),
+                ("hyperliquid.funding", hl.funding_snapshots(), storage.save_funding),
+                ("defillama.chains", llama.chain_tvls(), storage.save_chain_tvl),
+                (
+                    "defillama.yields",
+                    llama.yield_pools(limit=100),
+                    storage.save_yield_pools,
+                ),
+            ]
+            outcomes = await asyncio.gather(
+                *(_collect(label, coro, storage, saver) for label, coro, saver in jobs)
+            )
+    return dict(zip((label for label, _, _ in jobs), outcomes, strict=True))
+
+
+async def backfill_funding_history(
+    symbol: str = "BTCUSDT",
+    limit: int = 1000,
+    storage_path: str = "data/chainpulse.duckdb",
+) -> dict[str, str]:
+    """Resume-style backfill: fetch settled funding events past the watermark."""
+    stream = f"binance.history.{symbol}"
+    async with BinanceConnector() as binance:
+        events = await binance.funding_history(symbol, limit=limit)
+
+    with DuckDBStorage(storage_path) as storage:
+        saved = 0
+        if events:
+            oldest = min(e.funding_time_ms for e in events)
+            newest = max(e.funding_time_ms for e in events)
+            wm = storage.get_watermark(stream) or {}
+            if newest <= wm.get("last_funding_time_ms", 0):
+                summary = "no-new-events"
+                saved = 0
+            else:
+                saved = storage.save_funding(events)
+                storage.set_watermark(stream, {"last_funding_time_ms": newest})
+                summary = f"backfilled={saved} range=[{oldest},{newest}]"
+        else:
+            summary = "no-events-returned"
+            saved = 0
+    return {"backfill": summary, "rows_saved": str(saved)}
