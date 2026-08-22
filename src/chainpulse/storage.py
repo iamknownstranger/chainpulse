@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS watermarks (
     value       JSON NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sweep_log (
+    ts        TIMESTAMPTZ NOT NULL,
+    source    TEXT NOT NULL,
+    status    TEXT NOT NULL,
+    message   TEXT
+);
 """
 
 
@@ -164,6 +170,23 @@ class DuckDBStorage:
                 wb.collected_at,
             ),
         )
+
+    def record_sweep(self, results: dict[str, str]) -> None:
+        self.con.executemany(
+            "INSERT INTO sweep_log VALUES (now(), ?, ?, ?)",
+            [(src, "failed" if "FAILED" in msg else "ok", msg) for src, msg in results.items()],
+        )
+
+    def sweep_health(self) -> list[dict]:
+        return [
+            dict(zip(("ts", "source", "status", "message"), row, strict=True))
+            for row in self.con.execute(
+                """
+                SELECT max(ts), source, arg_max(status, ts), arg_max(message, ts)
+                FROM sweep_log GROUP BY source ORDER BY source
+                """
+            ).fetchall()
+        ]
 
     # -- watermarks ------------------------------------------------------
 

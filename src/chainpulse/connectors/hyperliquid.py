@@ -22,7 +22,11 @@ class HyperliquidConnector(Connector):
     venue = "hyperliquid"
 
     async def funding_snapshots(self) -> list[FundingSnapshot]:
-        universe, ctxs = await self.client.post_json(INFO_URL, {"type": "metaAndAssetCtxs"})
+        payload = await self.client.post_json(INFO_URL, {"type": "metaAndAssetCtxs"})
+        if isinstance(payload[0], dict):  # newer schema: [{universe,...}, ctxs]
+            universe, ctxs = payload[0]["universe"], payload[1]
+        else:  # legacy: [universe, ctxs]
+            universe, ctxs = payload
         out: list[FundingSnapshot] = []
         for meta, ctx in zip(universe, ctxs, strict=True):
             if meta.get("isDelisted"):
