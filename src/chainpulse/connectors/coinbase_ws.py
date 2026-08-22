@@ -33,9 +33,11 @@ def parse_coinbase_ticker(msg: dict[str, Any], venue: str = "coinbase-spot") -> 
     base, _, quote = msg["product_id"].rpartition("-")
     ts_raw = msg.get("time")
     try:
-        event_ts_ms = int(
-            datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp() * 1000
-        ) if ts_raw else 0
+        event_ts_ms = (
+            int(datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).timestamp() * 1000)
+            if ts_raw
+            else 0
+        )
     except ValueError:
         event_ts_ms = 0
     return TickSample(
