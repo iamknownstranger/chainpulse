@@ -296,7 +296,7 @@ with tab_funding:
                 y=top["base"],
                 orientation="h",
                 marker_color=ACCENT,
-                custom_data=top[["long_venue", "long_apr", "short_venue", "short_apr"]].values,
+                customdata=top[["long_venue", "long_apr", "short_venue", "short_apr"]].values,
                 hovertemplate=(
                     "<b>%{y}</b><br>spread %{x:.2f}% APR<br>"
                     "<span style='color:#8fa0bd'>long</span> %{customdata[0]} "
