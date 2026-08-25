@@ -309,8 +309,30 @@ with tab_funding:
         fig.update_layout(title="Cash-and-carry candidates — annualized funding spread")
         left, right = st.columns((3, 2), gap="large")
         with left:
-            section("Top divergence across venues")
-            st.plotly_chart(style_fig(fig, height=420), use_container_width=True)
+            section("Select a row to inspect its funding history")
+            spread_event = st.dataframe(
+                df,
+                key="spread_table",
+                on_select="rerun",
+                selection_mode="single-row",
+                hide_index=True,
+                column_config={
+                    "base": st.column_config.TextColumn("asset"),
+                    "short_venue": st.column_config.TextColumn("short venue"),
+                    "short_apr": st.column_config.NumberColumn("short APR %", format="%.2f"),
+                    "long_venue": st.column_config.TextColumn("long venue"),
+                    "long_apr": st.column_config.NumberColumn("long APR %", format="%.2f"),
+                    "spread_pct": st.column_config.NumberColumn("spread %", format="%.2f"),
+                },
+                use_container_width=True,
+                height=420,
+            )
+            st.download_button(
+                "Download spread CSV",
+                df.to_csv(index=False).encode(),
+                "funding_spread.csv",
+                mime="text/csv",
+            )
         with right:
             section("Latest snapshot per venue")
             ldf = pd.DataFrame(
@@ -339,12 +361,52 @@ with tab_funding:
                 use_container_width=True,
                 height=420,
             )
-        st.download_button(
-            "Download spread CSV",
-            df.to_csv(index=False).encode(),
-            "funding_spread.csv",
-            mime="text/csv",
-        )
+
+        # ---- drill-down trend for the selected asset ------------------------
+        sel_idx = spread_event.selection.rows[0] if spread_event.selection.rows else 0
+        selected_base = str(df.iloc[sel_idx]["base"])
+        st.divider()
+        hist = storage.funding_history_for(selected_base)
+        ticks = storage.tick_history(selected_base)
+        if not hist and not ticks:
+            st.caption(
+                f"No settled history for **{selected_base}** yet — trends build up as sweeps "
+                "and the live stream accumulate."
+            )
+        else:
+            section(f"{selected_base} — rate by venue & live mark price")
+            hcol, tcol = st.columns(2, gap="large")
+            with hcol:
+                fig_h = go.Figure()
+                venue_color = {"binance-usdm": ACCENT, "hyperliquid": ACCENT_2}
+                for venue in sorted({v for v, _, _ in hist}):
+                    pts = [(ts, float(r)) for v, ts, r in hist if v == venue]
+                    fig_h.add_scatter(
+                        x=[pd.to_datetime(ts, unit="ms", utc=True) for ts, _ in pts],
+                        y=[r for _, r in pts],
+                        mode="lines+markers",
+                        name=venue,
+                        line=dict(color=venue_color.get(venue, "#94a3b8"), width=2),
+                        hovertemplate="%{x:%H:%M}<br>%{y:.4f}%<extra></extra>",
+                    )
+                fig_h.update_layout(
+                    title=f"Settled funding — {selected_base}", yaxis_ticksuffix="%"
+                )
+                st.plotly_chart(style_fig(fig_h), use_container_width=True)
+            with tcol:
+                fig_t = go.Figure()
+                for symbol in sorted({sym for _, sym, _, _ in ticks}):
+                    pts = [(ts, float(p)) for _, sym, ts, p in ticks if sym == symbol]
+                    fig_t.add_scatter(
+                        x=[pd.to_datetime(ts, unit="ms", utc=True) for ts, _ in pts],
+                        y=[p for _, p in pts],
+                        mode="lines",
+                        name=symbol,
+                        line=dict(color=ACCENT, width=2),
+                        hovertemplate="%{x:%H:%M:%S}<br>$%{y:,.2f}<extra></extra>",
+                    )
+                fig_t.update_layout(title=f"Live mark price — {selected_base}")
+                st.plotly_chart(style_fig(fig_t), use_container_width=True)
 
 # ==========================================================================
 # chains
@@ -383,9 +445,12 @@ with tab_tvl:
             section("Total value locked")
             st.plotly_chart(style_fig(fig, height=max(360, 22 * top_n)), use_container_width=True)
         with right:
-            section("vs previous snapshot")
-            st.dataframe(
+            section("Select a chain for its TVL history")
+            chains_event = st.dataframe(
                 tdf[["chain", "tvl_usd", "delta_pct"]],
+                key="chains_table",
+                on_select="rerun",
+                selection_mode="single-row",
                 hide_index=True,
                 column_config={
                     "chain": st.column_config.TextColumn("chain"),
@@ -395,6 +460,28 @@ with tab_tvl:
                 use_container_width=True,
                 height=420,
             )
+
+        sel_idx_c = chains_event.selection.rows[0] if chains_event.selection.rows else 0
+        selected_chain = str(tdf.iloc[sel_idx_c]["chain"])
+        tvl_hist = storage.chain_tvl_history(selected_chain)
+        if len(tvl_hist) < 2:
+            st.caption(
+                f"TVL history for **{selected_chain}** builds up as more snapshots are collected "
+                f"({len(tvl_hist)} so far) — hit *Refresh now* between sweeps."
+            )
+        else:
+            section(f"{selected_chain} — TVL over collected snapshots")
+            fig_hist = go.Figure(
+                go.Scatter(
+                    x=[r[0] for r in tvl_hist],
+                    y=[float(r[1]) for r in tvl_hist],
+                    mode="lines+markers",
+                    line=dict(color=ACCENT, width=2, shape="spline"),
+                    hovertemplate="%{x|%H:%M}<br>%{y:$,.0f}<extra></extra>",
+                )
+            )
+            fig_hist.update_layout(height=260, title=None)
+            st.plotly_chart(style_fig(fig_hist, height=260), use_container_width=True)
 
 # ==========================================================================
 # yields
@@ -425,8 +512,11 @@ with tab_yields:
         view = view[view["tvl_usd"].map(float) >= min_tvl * 1e6]
         view = view.sort_values("apy_pct", ascending=False, na_position="last").head(top_k)
         apy_max = float(view["apy_pct"].dropna().max()) if len(view) else 100
-        st.dataframe(
+        pool_event = st.dataframe(
             view[["project", "chain", "symbol", "tvl_usd", "apy_pct", "stablecoin"]],
+            key="yields_table",
+            on_select="rerun",
+            selection_mode="single-row",
             hide_index=True,
             column_config={
                 "project": st.column_config.TextColumn("protocol"),
@@ -441,7 +531,7 @@ with tab_yields:
                 "stablecoin": st.column_config.CheckboxColumn("stable"),
             },
             use_container_width=True,
-            height=520,
+            height=430,
         )
         st.download_button(
             "Download CSV",
@@ -449,6 +539,44 @@ with tab_yields:
             "yield_pools.csv",
             mime="text/csv",
         )
+
+        sel_idx_y = pool_event.selection.rows[0] if pool_event.selection.rows else 0
+        selected_pool_id = str(view.iloc[sel_idx_y]["pool_id"])
+        pool_label = f"{view.iloc[sel_idx_y]['project']} · {view.iloc[sel_idx_y]['symbol']}"
+        pool_hist = storage.yield_pool_history(selected_pool_id)
+        if len(pool_hist) < 2:
+            st.caption(
+                f"History for **{pool_label}** builds up across refreshes "
+                f"({len(pool_hist)} snapshot so far)."
+            )
+        else:
+            section(f"{pool_label} — APY & TVL over snapshots")
+            pcol1, pcol2 = st.columns(2, gap="large")
+            with pcol1:
+                fig_apy = go.Figure(
+                    go.Scatter(
+                        x=[r[0] for r in pool_hist],
+                        y=[None if r[1] is None else float(r[1]) for r in pool_hist],
+                        mode="lines+markers",
+                        line=dict(color=ACCENT, width=2),
+                        hovertemplate="%{x|%H:%M}<br>%{y:.2f}%<extra></extra>",
+                    )
+                )
+                fig_apy.update_layout(title="APY %", yaxis_ticksuffix="%")
+                st.plotly_chart(style_fig(fig_apy), use_container_width=True)
+            with pcol2:
+                fig_tvl = go.Figure(
+                    go.Scatter(
+                        x=[r[0] for r in pool_hist],
+                        y=[float(r[2]) for r in pool_hist],
+                        mode="lines+markers",
+                        line=dict(color=ACCENT_2, width=2),
+                        hovertemplate="%{x|%H:%M}<br>%{y:$,.0f}<extra></extra>",
+                    )
+                )
+                fig_tvl.update_layout(title="TVL")
+                fig_tvl.update_yaxes(tickformat="$,.0s")
+                st.plotly_chart(style_fig(fig_tvl), use_container_width=True)
 
 # ==========================================================================
 # alerts

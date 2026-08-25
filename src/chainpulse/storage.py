@@ -357,6 +357,36 @@ class DuckDBStorage:
         assert row is not None
         return int(row[0])
 
+    # -- drill-down histories (power row-select trends) -------------------
+
+    def chain_tvl_history(self, chain: str) -> list[tuple]:
+        return self.con.execute(
+            "SELECT collected_at, tvl_usd FROM chain_tvl WHERE chain = ? ORDER BY collected_at",
+            [chain],
+        ).fetchall()
+
+    def funding_history_for(self, base: str) -> list[tuple]:
+        return self.con.execute(
+            """SELECT venue, funding_time_ms, rate FROM funding_events
+               WHERE base = ? ORDER BY funding_time_ms""",
+            [base],
+        ).fetchall()
+
+    def tick_history(self, base: str, since_hours: float = 48.0) -> list[tuple]:
+        cutoff_ms = int((time.time() - since_hours * 3600) * 1000)
+        return self.con.execute(
+            """SELECT venue, symbol, event_ts_ms, mark_price FROM tick_samples
+               WHERE base = ? AND event_ts_ms > ? ORDER BY event_ts_ms""",
+            [base, cutoff_ms],
+        ).fetchall()
+
+    def yield_pool_history(self, pool_id: str) -> list[tuple]:
+        return self.con.execute(
+            """SELECT collected_at, apy_pct, tvl_usd FROM yield_pools
+               WHERE pool_id = ? ORDER BY collected_at""",
+            [pool_id],
+        ).fetchall()
+
     def stats(self) -> dict[str, int | None]:
         tables = [
             "funding_events",

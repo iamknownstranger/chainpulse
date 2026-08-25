@@ -100,3 +100,20 @@ def test_chain_tvl_delta(tmp_path: Path) -> None:
         rows = st.chain_tvl_latest()
         chain, tvl, prev = rows[0]
         assert chain == "Ethereum" and float(prev) == 100 and float(tvl) == 110
+
+
+def test_drilldown_histories(tmp_path: Path) -> None:
+    with make_storage(tmp_path) as st:
+        st.save_funding([event(1000), event(2000)])
+        snap_hl = FundingSnapshot(venue="hyperliquid", base="BTC", quote="USD",
+                                  rate=Decimal("0.00005"), interval_hours=1)
+        st.save_funding([snap_hl])
+        assert len(st.funding_history_for("BTC")) == 3
+        venues = {r[0] for r in st.funding_history_for("BTC")}
+        assert venues == {"binance-usdm", "hyperliquid"}
+
+        st.set_watermark("s", {"v": 1})
+        assert st.get_watermark("s") == {"v": 1}
+        assert st.chain_tvl_history("Ethereum") == []
+        assert st.tick_history("BTC") == []
+        assert st.yield_pool_history("nope") == []
