@@ -105,8 +105,9 @@ def test_chain_tvl_delta(tmp_path: Path) -> None:
 def test_drilldown_histories(tmp_path: Path) -> None:
     with make_storage(tmp_path) as st:
         st.save_funding([event(1000), event(2000)])
-        snap_hl = FundingSnapshot(venue="hyperliquid", base="BTC", quote="USD",
-                                  rate=Decimal("0.00005"), interval_hours=1)
+        snap_hl = FundingSnapshot(
+            venue="hyperliquid", base="BTC", quote="USD", rate=Decimal("0.00005"), interval_hours=1
+        )
         st.save_funding([snap_hl])
         assert len(st.funding_history_for("BTC")) == 3
         venues = {r[0] for r in st.funding_history_for("BTC")}
